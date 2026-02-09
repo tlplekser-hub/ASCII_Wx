@@ -3,8 +3,17 @@ import { buildScreen, padLine } from "./renderer.js";
 const CONTENT_WIDTH = 48;
 const CITY_STORAGE_KEY = "ascii-weather-city";
 const TEMP_STORAGE_KEY = "ascii-weather-temp";
+const WIND_STORAGE_KEY = "ascii-weather-wind";
+const HUM_STORAGE_KEY = "ascii-weather-hum";
 const TEMP_LABEL_COL = 17;
-const DEFAULT_TEMP = "+03 C";
+const DEFAULT_TEMP = "-- C";
+const DEFAULT_WIND = "-- m/s";
+const DEFAULT_HUM = "--%";
+const DEFAULT_UPDATED = "--:--";
+const LOADING_TEMP = "-- C";
+const LOADING_WIND = "-- m/s";
+const LOADING_HUM = "--%";
+const LOADING_UPDATED = "--:--";
 const OPEN_METEO_CURRENT_PARAMS = [
   "temperature_2m",
   "relative_humidity_2m",
@@ -109,9 +118,32 @@ function formatTempC(value) {
   return sign + padded + " C";
 }
 
-function buildLines(cityName, tempValue) {
-  const city = toAsciiUpper(cityName) || "UNKNOWN";
+function formatWind(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return DEFAULT_WIND;
+  }
+  const rounded = Math.round(num);
+  return String(rounded) + " m/s";
+}
+
+function formatHum(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return DEFAULT_HUM;
+  }
+  const rounded = Math.round(num);
+  const clamped = Math.max(0, Math.min(rounded, 100));
+  const padded = clamped < 10 ? "0" + clamped : String(clamped);
+  return padded + "%";
+}
+
+function buildLines(cityName, tempValue, windValue, humValue, updatedValue) {
+  const city = toAsciiUpper(cityName) || "-----";
   const temp = String(tempValue || DEFAULT_TEMP);
+  const wind = String(windValue || DEFAULT_WIND);
+  const hum = String(humValue || DEFAULT_HUM);
+  const updated = String(updatedValue || DEFAULT_UPDATED);
   const hr = "-".repeat(CONTENT_WIDTH);
   const empty = " ".repeat(CONTENT_WIDTH);
 
@@ -124,7 +156,7 @@ function buildLines(cityName, tempValue) {
   cityLine = placeAt(cityLine, "  " + city, TEMP_LABEL_COL + 5, CONTENT_WIDTH);
 
   return [
-    centerLine("ASCII WEATHER", CONTENT_WIDTH),
+    centerLine("URSULA WEATHER", CONTENT_WIDTH),
     hr,
     empty,
     centerLine(".--.", CONTENT_WIDTH),
@@ -142,7 +174,7 @@ function buildLines(cityName, tempValue) {
     cityLine,
     empty,
     hr,
-    padLine("  updated: 12:34   wind: 3 m/s   hum: 86%", CONTENT_WIDTH),
+    padLine("  updated: " + updated + "   wind: " + wind + "   hum: " + hum, CONTENT_WIDTH),
     hr,
     padLine("  [R] refresh     [L] location     [A] about", CONTENT_WIDTH),
     empty,
@@ -215,7 +247,7 @@ function getCellFromEvent(pre, event) {
   return { row, col };
 }
 
-function isLocationCell(row, col) {
+function isRefreshCell(row, col) {
   if (row < 0 || col < 0 || row >= lastRenderedLines.length) {
     return false;
   }
@@ -223,7 +255,7 @@ function isLocationCell(row, col) {
   if (!line) {
     return false;
   }
-  const label = "[L] location";
+  const label = "[R] refresh";
   const start = line.indexOf(label);
   if (start === -1) {
     return false;
@@ -231,12 +263,12 @@ function isLocationCell(row, col) {
   return col >= start && col < start + label.length;
 }
 
-function bindLocationHotkeys() {
+function bindRefreshControls() {
   const screen = document.getElementById("screen");
   if (screen) {
     const handler = (event) => {
       const cell = getCellFromEvent(screen, event);
-      if (isLocationCell(cell.row, cell.col)) {
+      if (isRefreshCell(cell.row, cell.col)) {
         refreshLocation();
       }
     };
@@ -245,7 +277,7 @@ function bindLocationHotkeys() {
   }
 
   window.addEventListener("keydown", (event) => {
-    if (event.key === "l" || event.key === "L") {
+    if (event.key === "r" || event.key === "R") {
       event.preventDefault();
       refreshLocation();
     }
@@ -290,6 +322,44 @@ function loadTemp() {
   }
 }
 
+function saveWind(wind) {
+  if (!wind) {
+    return;
+  }
+  try {
+    localStorage.setItem(WIND_STORAGE_KEY, String(wind));
+  } catch (error) {
+    // ignore storage errors
+  }
+}
+
+function loadWind() {
+  try {
+    return localStorage.getItem(WIND_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function saveHum(hum) {
+  if (!hum) {
+    return;
+  }
+  try {
+    localStorage.setItem(HUM_STORAGE_KEY, String(hum));
+  } catch (error) {
+    // ignore storage errors
+  }
+}
+
+function loadHum() {
+  try {
+    return localStorage.getItem(HUM_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function sanitizeCityName(value) {
   return toAsciiUpper(value);
 }
@@ -309,7 +379,6 @@ function reverseGeocode(lat, lon) {
       }
       const address = data.address;
       return (
-        data.name ||
         address.city ||
         address.town ||
         address.village ||
@@ -320,6 +389,19 @@ function reverseGeocode(lat, lon) {
       );
     })
     .catch(() => "");
+}
+
+function formatUpdateTime(value) {
+  if (!value) {
+    return DEFAULT_UPDATED;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return DEFAULT_UPDATED;
+  }
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return hours + ":" + minutes;
 }
 
 function fetchWeather(lat, lon) {
@@ -359,6 +441,9 @@ function requestLocation() {
 let isLocating = false;
 let currentCity = loadCity() || "BERLIN";
 let currentTemp = loadTemp() || DEFAULT_TEMP;
+let currentWind = loadWind() || DEFAULT_WIND;
+let currentHum = loadHum() || DEFAULT_HUM;
+let currentUpdated = DEFAULT_UPDATED;
 let locationRequestId = 0;
 let lastRenderedLines = [];
 let cachedCharMetrics = null;
@@ -370,11 +455,11 @@ function refreshLocation() {
   isLocating = true;
   locationRequestId += 1;
   const requestId = locationRequestId;
-  renderScreen(buildLines("LOCATING...", currentTemp));
+  renderScreen(buildLines("-----", LOADING_TEMP, LOADING_WIND, LOADING_HUM, LOADING_UPDATED));
   const watchdog = setTimeout(() => {
     if (isLocating && requestId === locationRequestId) {
       isLocating = false;
-      renderScreen(buildLines(currentCity, currentTemp));
+      renderScreen(buildLines(currentCity, currentTemp, currentWind, currentHum, currentUpdated));
     }
   }, 12000);
   requestLocation()
@@ -399,14 +484,26 @@ function refreshLocation() {
       const weatherResult = results[1];
       if (weatherResult && weatherResult.status === "fulfilled" && weatherResult.value) {
         const nextTemp = formatTempC(weatherResult.value.temperature_2m);
+        const nextWind = formatWind(weatherResult.value.wind_speed_10m);
+        const nextHum = formatHum(weatherResult.value.relative_humidity_2m);
+        const nextUpdated = formatUpdateTime(weatherResult.value.time);
         currentTemp = nextTemp;
+        currentWind = nextWind;
+        currentHum = nextHum;
+        currentUpdated = nextUpdated;
         saveTemp(nextTemp);
+        saveWind(nextWind);
+        saveHum(nextHum);
       }
 
-      renderScreen(buildLines(currentCity, currentTemp));
+      renderScreen(buildLines(currentCity, currentTemp, currentWind, currentHum, currentUpdated));
     })
-    .catch(() => {
-      renderScreen(buildLines(currentCity, currentTemp));
+    .catch((error) => {
+      if (error && error.code === 1) {
+        renderScreen(buildLines("DENIED", currentTemp, currentWind, currentHum, currentUpdated));
+      } else {
+        renderScreen(buildLines(currentCity, currentTemp, currentWind, currentHum, currentUpdated));
+      }
     })
     .finally(() => {
       isLocating = false;
@@ -414,10 +511,10 @@ function refreshLocation() {
     });
 }
 
-renderScreen(buildLines(currentCity, currentTemp));
+renderScreen(buildLines(currentCity, currentTemp, currentWind, currentHum, currentUpdated));
 
 refreshLocation();
-bindLocationHotkeys();
+bindRefreshControls();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

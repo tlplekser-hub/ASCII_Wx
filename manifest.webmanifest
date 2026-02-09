@@ -1,6 +1,6 @@
 {
-  "name": "ASCII Weather",
-  "short_name": "ASCII Wx",
+  "name": "URSULA Weather",
+  "short_name": "URSULA Wx",
   "start_url": "./",
   "display": "standalone",
   "theme_color": "#000000",
