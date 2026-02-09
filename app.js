@@ -135,6 +135,25 @@ function renderScreen(lines) {
   });
 }
 
+function bindLocationHotkeys() {
+  const screen = document.getElementById("screen");
+  if (screen) {
+    screen.addEventListener("click", () => {
+      refreshLocation();
+    });
+    screen.addEventListener("touchend", () => {
+      refreshLocation();
+    });
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "l" || event.key === "L") {
+      event.preventDefault();
+      refreshLocation();
+    }
+  });
+}
+
 function saveCity(city) {
   if (!city) {
     return;
@@ -247,6 +266,7 @@ function refreshLocation() {
     return;
   }
   isLocating = true;
+  renderScreen(buildLines("LOCATING...", currentTemp));
   requestLocation()
     .then((position) => {
       const lat = position.coords.latitude;
@@ -273,7 +293,7 @@ function refreshLocation() {
       renderScreen(buildLines(currentCity, currentTemp));
     })
     .catch(() => {
-      // keep existing city if user denies or request fails
+      renderScreen(buildLines(currentCity, currentTemp));
     })
     .finally(() => {
       isLocating = false;
@@ -283,13 +303,7 @@ function refreshLocation() {
 renderScreen(buildLines(currentCity, currentTemp));
 
 refreshLocation();
-
-window.addEventListener("keydown", (event) => {
-  if (event.key === "l" || event.key === "L") {
-    event.preventDefault();
-    refreshLocation();
-  }
-});
+bindLocationHotkeys();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
