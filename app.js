@@ -2,6 +2,25 @@ import { buildScreen, padLine } from "./renderer.js";
 
 const CONTENT_WIDTH = 48;
 const CITY_STORAGE_KEY = "ascii-weather-city";
+const TEMP_STORAGE_KEY = "ascii-weather-temp";
+const TEMP_LABEL_COL = 17;
+const DEFAULT_TEMP = "+03 C";
+const OPEN_METEO_CURRENT_PARAMS = [
+  "temperature_2m",
+  "relative_humidity_2m",
+  "apparent_temperature",
+  "precipitation",
+  "rain",
+  "showers",
+  "snowfall",
+  "weather_code",
+  "cloud_cover",
+  "surface_pressure",
+  "wind_speed_10m",
+  "wind_direction_10m",
+  "wind_gusts_10m",
+  "is_day"
+].join(",");
 
 function centerLine(text, width) {
   const safe = String(text || "");
@@ -14,39 +33,84 @@ function centerLine(text, width) {
   return " ".repeat(left) + safe + " ".repeat(right);
 }
 
-function buildLines(cityName) {
-  const city = cityName && cityName.length > 0 ? cityName : "UNKNOWN";
+function placeAt(baseLine, text, col, width) {
+  const safeBase = padLine(baseLine, width);
+  if (!text) {
+    return safeBase;
+  }
+  const safeText = String(text);
+  if (col >= width) {
+    return safeBase;
+  }
+  const prefix = safeBase.slice(0, col);
+  const suffixStart = Math.min(width, col + safeText.length);
+  const suffix = safeBase.slice(suffixStart);
+  return padLine(prefix + safeText, width).slice(0, width - suffix.length) + suffix;
+}
+
+function toAsciiUpper(value) {
+  const raw = String(value || "");
+  const deaccented = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const upper = deaccented.toUpperCase();
+  const asciiOnly = upper.replace(/[^A-Z0-9 ]/g, " ");
+  return asciiOnly.replace(/\s+/g, " ").trim();
+}
+
+function formatTempC(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return DEFAULT_TEMP;
+  }
+  const rounded = Math.round(num);
+  const sign = rounded >= 0 ? "+" : "-";
+  const absValue = Math.abs(rounded);
+  const padded = absValue < 10 ? "0" + absValue : String(absValue);
+  return sign + padded + " C";
+}
+
+function buildLines(cityName, tempValue) {
+  const city = toAsciiUpper(cityName) || "UNKNOWN";
+  const temp = String(tempValue || DEFAULT_TEMP);
   const hr = "-".repeat(CONTENT_WIDTH);
+  const empty = " ".repeat(CONTENT_WIDTH);
+
+  let tempLine = empty;
+  tempLine = placeAt(tempLine, "TEMP:", TEMP_LABEL_COL, CONTENT_WIDTH);
+  tempLine = placeAt(tempLine, "  " + temp, TEMP_LABEL_COL + 5, CONTENT_WIDTH);
+
+  let cityLine = empty;
+  cityLine = placeAt(cityLine, "CITY:", TEMP_LABEL_COL, CONTENT_WIDTH);
+  cityLine = placeAt(cityLine, "  " + city, TEMP_LABEL_COL + 5, CONTENT_WIDTH);
 
   return [
     centerLine("ASCII WEATHER", CONTENT_WIDTH),
     hr,
-    " ".repeat(CONTENT_WIDTH),
+    empty,
     centerLine(".--.", CONTENT_WIDTH),
     centerLine(".-(    ).", CONTENT_WIDTH),
     centerLine("(___.__)__)", CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
+    empty,
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    centerLine("TEMP:  +03 C", CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    centerLine("CITY:  " + city, CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
+    empty,
+    empty,
+    tempLine,
+    empty,
+    cityLine,
+    empty,
     hr,
     padLine("  updated: 12:34   wind: 3 m/s   hum: 86%", CONTENT_WIDTH),
     hr,
     padLine("  [R] refresh     [L] location     [A] about", CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
+    empty,
     padLine("  tip: add to home screen for full PWA vibe", CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH),
-    " ".repeat(CONTENT_WIDTH)
+    empty,
+    empty,
+    empty,
+    empty,
+    empty
   ];
 }
 
@@ -90,9 +154,27 @@ function loadCity() {
   }
 }
 
+function saveTemp(temp) {
+  if (!temp) {
+    return;
+  }
+  try {
+    localStorage.setItem(TEMP_STORAGE_KEY, String(temp));
+  } catch (error) {
+    // ignore storage errors
+  }
+}
+
+function loadTemp() {
+  try {
+    return localStorage.getItem(TEMP_STORAGE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function sanitizeCityName(value) {
-  const raw = String(value || "");
-  return raw.replace(/\s+/g, " ").trim();
+  return toAsciiUpper(value);
 }
 
 function reverseGeocode(lat, lon) {
@@ -122,6 +204,27 @@ function reverseGeocode(lat, lon) {
     .catch(() => "");
 }
 
+function fetchWeather(lat, lon) {
+  const url =
+    "https://api.open-meteo.com/v1/forecast?latitude=" +
+    encodeURIComponent(lat) +
+    "&longitude=" +
+    encodeURIComponent(lon) +
+    "&current=" +
+    encodeURIComponent(OPEN_METEO_CURRENT_PARAMS) +
+    "&temperature_unit=celsius&wind_speed_unit=ms&precipitation_unit=mm&timezone=auto";
+
+  return fetch(url)
+    .then((response) => (response.ok ? response.json() : null))
+    .then((data) => {
+      if (!data || !data.current) {
+        return null;
+      }
+      return data.current;
+    })
+    .catch(() => null);
+}
+
 function requestLocation() {
   if (!("geolocation" in navigator)) {
     return Promise.reject(new Error("geolocation unsupported"));
@@ -135,22 +238,58 @@ function requestLocation() {
   });
 }
 
-const initialCity = loadCity() || "BERLIN";
-renderScreen(buildLines(initialCity));
+let isLocating = false;
+let currentCity = loadCity() || "BERLIN";
+let currentTemp = loadTemp() || DEFAULT_TEMP;
 
-requestLocation()
-  .then((position) => reverseGeocode(position.coords.latitude, position.coords.longitude))
-  .then((city) => {
-    const normalized = sanitizeCityName(city);
-    if (normalized.length === 0) {
-      return;
-    }
-    saveCity(normalized);
-    renderScreen(buildLines(normalized));
-  })
-  .catch(() => {
-    // keep existing city if user denies or request fails
-  });
+function refreshLocation() {
+  if (isLocating) {
+    return;
+  }
+  isLocating = true;
+  requestLocation()
+    .then((position) => {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      return Promise.allSettled([reverseGeocode(lat, lon), fetchWeather(lat, lon)]);
+    })
+    .then((results) => {
+      const cityResult = results[0];
+      if (cityResult && cityResult.status === "fulfilled") {
+        const normalized = sanitizeCityName(cityResult.value);
+        if (normalized.length > 0) {
+          currentCity = normalized;
+          saveCity(normalized);
+        }
+      }
+
+      const weatherResult = results[1];
+      if (weatherResult && weatherResult.status === "fulfilled" && weatherResult.value) {
+        const nextTemp = formatTempC(weatherResult.value.temperature_2m);
+        currentTemp = nextTemp;
+        saveTemp(nextTemp);
+      }
+
+      renderScreen(buildLines(currentCity, currentTemp));
+    })
+    .catch(() => {
+      // keep existing city if user denies or request fails
+    })
+    .finally(() => {
+      isLocating = false;
+    });
+}
+
+renderScreen(buildLines(currentCity, currentTemp));
+
+refreshLocation();
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "l" || event.key === "L") {
+    event.preventDefault();
+    refreshLocation();
+  }
+});
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
