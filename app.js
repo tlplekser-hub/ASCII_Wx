@@ -159,9 +159,10 @@ function buildLines(cityName, tempValue, windValue, humValue, updatedValue) {
     centerLine("URSULA WEATHER", CONTENT_WIDTH),
     hr,
     empty,
-    centerLine(".--.", CONTENT_WIDTH),
-    centerLine(".-(    ).", CONTENT_WIDTH),
-    centerLine("(___.__)__)", CONTENT_WIDTH),
+    centerLine("|\\__/,|   (`\\", CONTENT_WIDTH),
+    centerLine("|_ _  |.--.) )", CONTENT_WIDTH),
+    centerLine("( T   )     /", CONTENT_WIDTH),
+    centerLine("(((^_(((/(((_/", CONTENT_WIDTH),
     empty,
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
     centerLine("_-_-_-_-_-_-_-_-_-_-_-_-_", CONTENT_WIDTH),
@@ -176,10 +177,10 @@ function buildLines(cityName, tempValue, windValue, humValue, updatedValue) {
     hr,
     padLine("  updated: " + updated + "   wind: " + wind + "   hum: " + hum, CONTENT_WIDTH),
     hr,
+    empty,
     padLine("  [R] refresh     [L] location     [A] about", CONTENT_WIDTH),
     empty,
     padLine("  tip: add to home screen for full PWA vibe", CONTENT_WIDTH),
-    empty,
     empty,
     empty,
     empty,
@@ -194,6 +195,7 @@ function renderScreen(lines) {
   }
   const screenText = buildScreen(lines);
   screen.textContent = screenText;
+  cachedCharMetrics = null;
 
   lastRenderedLines = screenText.split("\n");
   const lengths = new Set(lastRenderedLines.map((line) => line.length));
@@ -213,17 +215,22 @@ function getCharMetrics(pre) {
     return cachedCharMetrics;
   }
   const style = window.getComputedStyle(pre);
-  const lineHeight = parseFloat(style.lineHeight) || 1;
-  const probe = document.createElement("span");
-  probe.textContent = "M";
+  const probe = document.createElement("pre");
+  probe.textContent = "M\nM";
   probe.style.position = "absolute";
   probe.style.visibility = "hidden";
+  probe.style.margin = "0";
+  probe.style.padding = "0";
   probe.style.fontFamily = style.fontFamily;
   probe.style.fontSize = style.fontSize;
   probe.style.fontWeight = style.fontWeight;
   probe.style.letterSpacing = style.letterSpacing;
+  probe.style.lineHeight = style.lineHeight;
+  probe.style.whiteSpace = "pre";
   document.body.appendChild(probe);
-  const charWidth = probe.getBoundingClientRect().width || 1;
+  const rect = probe.getBoundingClientRect();
+  const lineHeight = rect.height / 2 || parseFloat(style.lineHeight) || 1;
+  const charWidth = rect.width || 1;
   document.body.removeChild(probe);
   cachedCharMetrics = { lineHeight, charWidth };
   return cachedCharMetrics;
@@ -251,16 +258,24 @@ function isRefreshCell(row, col) {
   if (row < 0 || col < 0 || row >= lastRenderedLines.length) {
     return false;
   }
-  const line = lastRenderedLines[row];
-  if (!line) {
+  const labelRow = lastRenderedLines.findIndex((line) =>
+    line && line.indexOf("[R] refresh") !== -1
+  );
+  if (labelRow === -1) {
     return false;
   }
+  const line = lastRenderedLines[labelRow];
   const label = "[R] refresh";
   const start = line.indexOf(label);
   if (start === -1) {
     return false;
   }
-  return col >= start && col < start + label.length;
+  const end = start + label.length - 1;
+  const rowMin = Math.max(0, labelRow - 1);
+  const rowMax = Math.min(lastRenderedLines.length - 1, labelRow + 1);
+  const colMin = Math.max(0, start - 1);
+  const colMax = Math.min(line.length - 1, end + 1);
+  return row >= rowMin && row <= rowMax && col >= colMin && col <= colMax;
 }
 
 function bindRefreshControls() {
