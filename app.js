@@ -163,28 +163,85 @@ function renderScreen(lines) {
   const screenText = buildScreen(lines);
   screen.textContent = screenText;
 
-  const renderedLines = screenText.split("\n");
-  const lengths = new Set(renderedLines.map((line) => line.length));
-  console.log("ASCII screen check:", renderedLines.length, Array.from(lengths));
-  if (renderedLines.length !== 30) {
-    console.warn("ASCII screen height mismatch:", renderedLines.length);
+  lastRenderedLines = screenText.split("\n");
+  const lengths = new Set(lastRenderedLines.map((line) => line.length));
+  console.log("ASCII screen check:", lastRenderedLines.length, Array.from(lengths));
+  if (lastRenderedLines.length !== 30) {
+    console.warn("ASCII screen height mismatch:", lastRenderedLines.length);
   }
-  renderedLines.forEach((line, index) => {
+  lastRenderedLines.forEach((line, index) => {
     if (line.length !== 50) {
       console.warn("ASCII screen width mismatch at line", index + 1, "len:", line.length);
     }
   });
 }
 
+function getCharMetrics(pre) {
+  if (cachedCharMetrics) {
+    return cachedCharMetrics;
+  }
+  const style = window.getComputedStyle(pre);
+  const lineHeight = parseFloat(style.lineHeight) || 1;
+  const probe = document.createElement("span");
+  probe.textContent = "M";
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.fontFamily = style.fontFamily;
+  probe.style.fontSize = style.fontSize;
+  probe.style.fontWeight = style.fontWeight;
+  probe.style.letterSpacing = style.letterSpacing;
+  document.body.appendChild(probe);
+  const charWidth = probe.getBoundingClientRect().width || 1;
+  document.body.removeChild(probe);
+  cachedCharMetrics = { lineHeight, charWidth };
+  return cachedCharMetrics;
+}
+
+function getCellFromEvent(pre, event) {
+  const rect = pre.getBoundingClientRect();
+  const clientX =
+    event.clientX ||
+    (event.changedTouches && event.changedTouches[0] && event.changedTouches[0].clientX) ||
+    0;
+  const clientY =
+    event.clientY ||
+    (event.changedTouches && event.changedTouches[0] && event.changedTouches[0].clientY) ||
+    0;
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  const metrics = getCharMetrics(pre);
+  const col = Math.floor(x / metrics.charWidth);
+  const row = Math.floor(y / metrics.lineHeight);
+  return { row, col };
+}
+
+function isLocationCell(row, col) {
+  if (row < 0 || col < 0 || row >= lastRenderedLines.length) {
+    return false;
+  }
+  const line = lastRenderedLines[row];
+  if (!line) {
+    return false;
+  }
+  const label = "[L] location";
+  const start = line.indexOf(label);
+  if (start === -1) {
+    return false;
+  }
+  return col >= start && col < start + label.length;
+}
+
 function bindLocationHotkeys() {
   const screen = document.getElementById("screen");
   if (screen) {
-    screen.addEventListener("click", () => {
-      refreshLocation();
-    });
-    screen.addEventListener("touchend", () => {
-      refreshLocation();
-    });
+    const handler = (event) => {
+      const cell = getCellFromEvent(screen, event);
+      if (isLocationCell(cell.row, cell.col)) {
+        refreshLocation();
+      }
+    };
+    screen.addEventListener("click", handler);
+    screen.addEventListener("touchend", handler);
   }
 
   window.addEventListener("keydown", (event) => {
@@ -303,6 +360,8 @@ let isLocating = false;
 let currentCity = loadCity() || "BERLIN";
 let currentTemp = loadTemp() || DEFAULT_TEMP;
 let locationRequestId = 0;
+let lastRenderedLines = [];
+let cachedCharMetrics = null;
 
 function refreshLocation() {
   if (isLocating) {
