@@ -48,11 +48,52 @@ function placeAt(baseLine, text, col, width) {
   return padLine(prefix + safeText, width).slice(0, width - suffix.length) + suffix;
 }
 
+const CYRILLIC_MAP = {
+  А: "A",
+  Б: "B",
+  В: "V",
+  Г: "G",
+  Д: "D",
+  Е: "E",
+  Ё: "E",
+  Ж: "ZH",
+  З: "Z",
+  И: "I",
+  Й: "Y",
+  К: "K",
+  Л: "L",
+  М: "M",
+  Н: "N",
+  О: "O",
+  П: "P",
+  Р: "R",
+  С: "S",
+  Т: "T",
+  У: "U",
+  Ф: "F",
+  Х: "KH",
+  Ц: "TS",
+  Ч: "CH",
+  Ш: "SH",
+  Щ: "SHCH",
+  Ъ: "",
+  Ы: "Y",
+  Ь: "",
+  Э: "E",
+  Ю: "YU",
+  Я: "YA"
+};
+
+function transliterateCyrillic(input) {
+  return input.replace(/[А-ЯЁ]/g, (char) => CYRILLIC_MAP[char] || "");
+}
+
 function toAsciiUpper(value) {
   const raw = String(value || "");
-  const deaccented = raw.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
-  const upper = deaccented.toUpperCase();
-  const asciiOnly = upper.replace(/[^A-Z0-9 ]/g, " ");
+  const upper = raw.toUpperCase();
+  const cyrillic = transliterateCyrillic(upper);
+  const deaccented = cyrillic.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  const asciiOnly = deaccented.replace(/[^A-Z0-9 ]/g, " ");
   return asciiOnly.replace(/\s+/g, " ").trim();
 }
 
@@ -198,7 +239,7 @@ function sanitizeCityName(value) {
 
 function reverseGeocode(lat, lon) {
   const url =
-    "https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=" +
+    "https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&accept-language=en&lat=" +
     encodeURIComponent(lat) +
     "&lon=" +
     encodeURIComponent(lon);
@@ -211,6 +252,7 @@ function reverseGeocode(lat, lon) {
       }
       const address = data.address;
       return (
+        data.name ||
         address.city ||
         address.town ||
         address.village ||
@@ -260,13 +302,22 @@ function requestLocation() {
 let isLocating = false;
 let currentCity = loadCity() || "BERLIN";
 let currentTemp = loadTemp() || DEFAULT_TEMP;
+let locationRequestId = 0;
 
 function refreshLocation() {
   if (isLocating) {
     return;
   }
   isLocating = true;
+  locationRequestId += 1;
+  const requestId = locationRequestId;
   renderScreen(buildLines("LOCATING...", currentTemp));
+  const watchdog = setTimeout(() => {
+    if (isLocating && requestId === locationRequestId) {
+      isLocating = false;
+      renderScreen(buildLines(currentCity, currentTemp));
+    }
+  }, 12000);
   requestLocation()
     .then((position) => {
       const lat = position.coords.latitude;
@@ -274,6 +325,9 @@ function refreshLocation() {
       return Promise.allSettled([reverseGeocode(lat, lon), fetchWeather(lat, lon)]);
     })
     .then((results) => {
+      if (requestId !== locationRequestId) {
+        return;
+      }
       const cityResult = results[0];
       if (cityResult && cityResult.status === "fulfilled") {
         const normalized = sanitizeCityName(cityResult.value);
@@ -297,6 +351,7 @@ function refreshLocation() {
     })
     .finally(() => {
       isLocating = false;
+      clearTimeout(watchdog);
     });
 }
 
